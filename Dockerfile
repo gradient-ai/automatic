@@ -18,7 +18,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY webui.sh webui.sh
 
 ENV install_dir=/
-RUN ./webui.sh -f can_run_as_root --exit --skip-torch-cuda-test
+# RUN ./webui.sh -f can_run_as_root --exit --skip-torch-cuda-test
+RUN ./webui.sh
 
 ENV VIRTUAL_ENV=/automatic/venv
 ENV PATH="$VIRTUAL_ENV/bin:$PATH"
