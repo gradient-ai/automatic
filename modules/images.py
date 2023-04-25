@@ -1,22 +1,20 @@
 import datetime
-
-import pytz
 import io
-import math
-import os
-from collections import namedtuple
 import re
-
+import os
+import math
+import json
+import string
+import hashlib
+from collections import namedtuple
+import pytz
 import numpy as np
 import piexif
 import piexif.helper
 from PIL import Image, ImageFont, ImageDraw, PngImagePlugin, ExifTags
-import string
-import json
-import hashlib
 
 from modules import sd_samplers, shared, script_callbacks, errors
-from modules.shared import opts, cmd_opts
+from modules.shared import opts, cmd_opts # pylint: disable=unused-import
 
 LANCZOS = (Image.Resampling.LANCZOS if hasattr(Image, 'Resampling') else Image.LANCZOS)
 
@@ -146,7 +144,7 @@ def draw_grid_annotations(im, width, height, hor_texts, ver_texts, margin=0):
             return ImageFont.truetype('javascript/roboto.ttf', fontsize)
 
     def draw_texts(drawing, draw_x, draw_y, lines, initial_fnt, initial_fontsize):
-        for i, line in enumerate(lines):
+        for _i, line in enumerate(lines):
             fnt = initial_fnt
             fontsize = initial_fontsize
             while drawing.multiline_textsize(line.text, font=fnt)[0] > line.allowed_width and fontsize > 0:
@@ -320,10 +318,9 @@ max_filename_part_length = 128
 def sanitize_filename_part(text, replace_spaces=True):
     if text is None:
         return None
-
+    text = os.path.basename(text)
     if replace_spaces:
         text = text.replace(' ', '_')
-
     text = text.translate({ord(x): '_' for x in invalid_filename_chars})
     text = text.lstrip(invalid_filename_prefix)[:max_filename_part_length]
     text = text.rstrip(invalid_filename_postfix)
@@ -341,6 +338,7 @@ class FilenameGenerator:
         'sampler': lambda self: self.p and sanitize_filename_part(self.p.sampler_name, replace_spaces=False),
         'model_hash': lambda self: getattr(self.p, "sd_model_hash", shared.sd_model.sd_model_hash),
         'model_name': lambda self: sanitize_filename_part(shared.sd_model.sd_checkpoint_info.model_name, replace_spaces=False),
+        'model_shortname': lambda self: sanitize_filename_part(shared.sd_model.sd_checkpoint_info.name_for_extra, replace_spaces=False),
         'date': lambda self: datetime.datetime.now().strftime('%Y-%m-%d'),
         'datetime': lambda self, *args: self.datetime(*args),  # accepts formats: [datetime], [datetime<Format>], [datetime<Format><Time Zone>]
         'job_timestamp': lambda self: getattr(self.p, "job_timestamp", shared.state.job_timestamp),
@@ -599,17 +597,14 @@ def safe_decode_string(s: bytes):
     remove_prefix = lambda text, prefix: text[len(prefix):] if text.startswith(prefix) else text
     for encoding in ['utf-8', 'utf-16', 'ascii', 'latin_1', 'cp1252', 'cp437']: # try different encodings
         try:
-            decoded = s.decode(encoding, errors="strict")
-            val = remove_prefix(decoded, 'UNICODE') # remove silly prefix added by old pnginfo/exif encoding
-            val = remove_prefix(val, 'ASCII')
+            s = remove_prefix(s, b'UNICODE')
+            s = remove_prefix(s, b'ASCII')
+            s = remove_prefix(s, b'\x00')
+            val = s.decode(encoding, errors="strict")
             val = re.sub(r'[\x00-\x09]', '', val).strip() # remove remaining special characters
-            if len(val) > 1024: # limit string length
-                val = val[:1024]
             if len(val) == 0: # remove empty strings
                 val = None
-            # if not all(ord(c) < 128 for c in decoded): # only allow 7-bit ascii characters
-            #    val = None
-            return val 
+            return val
         except:
             pass
     return None
@@ -639,7 +634,7 @@ def read_info_from_image(image):
         if isinstance(val, bytes): # decode bytestring
             items[key] = safe_decode_string(val)
 
-    for key in ['exif', 'ExifOffset', 'JpegIFOffset', 'JpegIFByteCount', 'ExifVersion', 'icc_profile', 'jfif', 'jfif_version', 'jfif_unit', 'jfif_density', 'adobe', 'photoshop', 'loop', 'duration']: # remove unwanted tags
+    for key in ['exif', 'ExifOffset', 'JpegIFOffset', 'JpegIFByteCount', 'ExifVersion', 'icc_profile', 'jfif', 'jfif_version', 'jfif_unit', 'jfif_density', 'adobe', 'photoshop', 'loop', 'duration', 'dpi']: # remove unwanted tags
         items.pop(key, None)
 
     if items.get("Software", None) == "NovelAI":
@@ -651,7 +646,6 @@ Negative prompt: {json_info["uc"]}
 Steps: {json_info["steps"]}, Sampler: {sampler}, CFG scale: {json_info["scale"]}, Seed: {json_info["seed"]}, Size: {image.width}x{image.height}, Clip skip: 2, ENSD: 31337"""
         except Exception as e:
             errors.display(e, 'novelai image parser')
-
     return geninfo, items
 
 

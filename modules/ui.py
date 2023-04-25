@@ -3,7 +3,6 @@ import mimetypes
 import os
 import sys
 from functools import reduce
-import warnings
 
 import gradio as gr
 import gradio.routes
@@ -13,7 +12,7 @@ from PIL import Image
 from modules.call_queue import wrap_gradio_gpu_call, wrap_queued_call, wrap_gradio_call
 
 from modules import sd_hijack, sd_models, script_callbacks, ui_extensions, deepbooru, sd_vae, extra_networks, ui_common, ui_postprocessing
-from modules.ui_components import FormRow, FormColumn, FormGroup, ToolButton, FormHTML
+from modules.ui_components import FormRow, FormColumn, FormGroup, ToolButton, FormHTML # pylint: disable=unused-import
 from modules.paths import script_path, data_path
 from modules.shared import opts, cmd_opts
 import modules.codeformer_model
@@ -33,8 +32,6 @@ from modules.generation_parameters_copypaste import image_from_url_text
 import modules.extras
 
 errors.install()
-warnings.filterwarnings("ignore", category=UserWarning)
-# this is a fix for Windows users. Without it, javascript files will be served with text/html content-type and the browser will not show any UI
 mimetypes.init()
 mimetypes.add_type('application/javascript', '.js')
 
@@ -133,7 +130,7 @@ def process_interrogate(interrogation_function, mode, ii_input_dir, ii_output_di
             img = Image.open(image)
             filename = os.path.basename(image)
             left, _ = os.path.splitext(filename)
-            print(interrogation_function(img), file=open(os.path.join(ii_output_dir, left + ".txt"), 'a'))
+            print(interrogation_function(img), file=open(os.path.join(ii_output_dir, left + ".txt"), 'a', encoding='utf-8'))
 
         return [gr.update(), None]
 
@@ -157,21 +154,23 @@ def create_seed_inputs(target_interface):
         random_seed = ToolButton(random_symbol, elem_id=target_interface + '_random_seed')
         reuse_seed = ToolButton(reuse_symbol, elem_id=target_interface + '_reuse_seed')
 
-    with FormRow(visible=True, elem_id=target_interface + '_subseed_row') as seed_extra_row_1:
+        seed_checkbox = gr.Checkbox(label='Extra', elem_id=target_interface + '_subseed_show', value=False, visible=False)  # Ghost checkbox, so it still gets sent. For compatibility with extensions that call txt2img or img2img manually
+
+    with FormRow(visible=True, elem_id=target_interface + '_subseed_row'):
         subseed = gr.Number(label='Variation seed', value=-1, elem_id=target_interface + '_subseed')
         subseed.style(container=False)
-        # random_subseed = ToolButton(random_symbol, elem_id=target_interface + '_random_subseed')
+        random_subseed = ToolButton(random_symbol, elem_id=target_interface + '_random_subseed')
         reuse_subseed = ToolButton(reuse_symbol, elem_id=target_interface + '_reuse_subseed')
         subseed_strength = gr.Slider(label='Strength', value=0.0, minimum=0, maximum=1, step=0.01, elem_id=target_interface + '_subseed_strength')
 
-    with FormRow(visible=False) as seed_extra_row_2:
+    with FormRow(visible=False):
         seed_resize_from_w = gr.Slider(minimum=0, maximum=2048, step=8, label="Resize seed from width", value=0, elem_id=target_interface + '_seed_resize_from_w')
         seed_resize_from_h = gr.Slider(minimum=0, maximum=2048, step=8, label="Resize seed from height", value=0, elem_id=target_interface + '_seed_resize_from_h')
 
     random_seed.click(fn=lambda: [-1, -1], show_progress=False, inputs=[], outputs=[seed, subseed])
-    # random_subseed.click(fn=lambda: -1, show_progress=False, inputs=[], outputs=[subseed])
+    random_subseed.click(fn=lambda: -1, show_progress=False, inputs=[], outputs=[subseed])
 
-    return seed, reuse_seed, subseed, reuse_subseed, subseed_strength, seed_resize_from_h, seed_resize_from_w
+    return seed, reuse_seed, subseed, reuse_subseed, subseed_strength, seed_resize_from_h, seed_resize_from_w, seed_checkbox
 
 
 
@@ -449,7 +448,7 @@ def create_ui():
                             clip_skip.change(fn=change_clip_skip, show_progress=False, inputs=clip_skip)
 
                     elif category == "seed":
-                        seed, reuse_seed, subseed, reuse_subseed, subseed_strength, seed_resize_from_h, seed_resize_from_w = create_seed_inputs('txt2img')
+                        seed, reuse_seed, subseed, reuse_subseed, subseed_strength, seed_resize_from_h, seed_resize_from_w, seed_checkbox = create_seed_inputs('txt2img')
 
                     elif category == "checkboxes":
                         with FormRow(elem_classes="checkboxes-row", variant="compact"):
@@ -516,6 +515,7 @@ def create_ui():
                     cfg_scale,
                     seed,
                     subseed, subseed_strength, seed_resize_from_h, seed_resize_from_w,
+                    seed_checkbox,  # seed_enable_extras
                     height,
                     width,
                     enable_hr,
@@ -670,9 +670,9 @@ def create_ui():
                     with gr.TabItem('Batch', id='batch', elem_id="img2img_batch_tab") as tab_batch:
                         hidden = '<br>Disabled when launched with --hide-ui-dir-config.' if shared.cmd_opts.hide_ui_dir_config else ''
                         gr.HTML(
-                            f"<p style='padding-bottom: 1em;' class=\"text-gray-500\">Process images in a directory on the same machine where the server is running." +
-                            f"<br>Use an empty output directory to save pictures normally instead of writing to the output directory." +
-                            f"<br>Add inpaint batch mask directory to enable inpaint batch processing."
+                            "<p style='padding-bottom: 1em;' class=\"text-gray-500\">Process images in a directory on the same machine where the server is running." +
+                            "<br>Use an empty output directory to save pictures normally instead of writing to the output directory." +
+                            "<br>Add inpaint batch mask directory to enable inpaint batch processing."
                             f"{hidden}</p>"
                         )
                         img2img_batch_input_dir = gr.Textbox(label="Input directory", **shared.hide_dirs, elem_id="img2img_batch_input_dir")
@@ -728,7 +728,7 @@ def create_ui():
                                 clip_skip.change(fn=change_clip_skip, show_progress=False, inputs=clip_skip)
 
                     elif category == "seed":
-                        seed, reuse_seed, subseed, reuse_subseed, subseed_strength, seed_resize_from_h, seed_resize_from_w = create_seed_inputs('img2img')
+                        seed, reuse_seed, subseed, reuse_subseed, subseed_strength, seed_resize_from_h, seed_resize_from_w, seed_checkbox = create_seed_inputs('img2img')
 
                     elif category == "checkboxes":
                         with FormRow(elem_classes="checkboxes-row", variant="compact"):
@@ -818,6 +818,7 @@ def create_ui():
                     denoising_strength,
                     seed,
                     subseed, subseed_strength, seed_resize_from_h, seed_resize_from_w,
+                    seed_checkbox,  # seed_enable_extras
                     height,
                     width,
                     resize_mode,
@@ -1126,7 +1127,7 @@ def create_ui():
                         gradient_step = gr.Number(label='Gradient accumulation steps', value=1, precision=0, elem_id="train_gradient_step")
 
                     dataset_directory = gr.Textbox(label='Dataset directory', placeholder="Path to directory with input images", elem_id="train_dataset_directory")
-                    log_directory = gr.Textbox(label='Log directory', placeholder="Path to directory where to write outputs", value="textual_inversion", elem_id="train_log_directory")
+                    log_directory = gr.Textbox(label='Log directory', placeholder="Path to directory where to write outputs", value="train/log/embeddings", elem_id="train_log_directory")
 
                     with FormRow():
                         template_file = gr.Dropdown(label='Prompt template', value="style_filewords.txt", elem_id="train_template_file", choices=get_textual_inversion_template_names())
@@ -1135,7 +1136,7 @@ def create_ui():
                     training_width = gr.Slider(minimum=64, maximum=2048, step=8, label="Width", value=512, elem_id="train_training_width")
                     training_height = gr.Slider(minimum=64, maximum=2048, step=8, label="Height", value=512, elem_id="train_training_height")
                     varsize = gr.Checkbox(label="Do not resize images", value=False, elem_id="train_varsize")
-                    steps = gr.Number(label='Max steps', value=100000, precision=0, elem_id="train_steps")
+                    steps = gr.Number(label='Max steps', value=1000, precision=0, elem_id="train_steps")
 
                     with FormRow():
                         create_image_every = gr.Number(label='Save an image to log directory every N steps, 0 to disable', value=500, precision=0, elem_id="train_create_image_every")
@@ -1162,8 +1163,8 @@ def create_ui():
 
             with gr.Column(elem_id='ti_gallery_container'):
                 ti_output = gr.Text(elem_id="ti_output", value="", show_label=False)
-                ti_gallery = gr.Gallery(label='Output', show_label=False, elem_id='ti_gallery').style(grid=4)
-                ti_progress = gr.HTML(elem_id="ti_progress", value="")
+                _ti_gallery = gr.Gallery(label='Output', show_label=False, elem_id='ti_gallery').style(grid=4)
+                _ti_progress = gr.HTML(elem_id="ti_progress", value="")
                 ti_outcome = gr.HTML(elem_id="ti_error", value="")
 
         create_embedding.click(
@@ -1513,10 +1514,6 @@ def create_ui():
                 with gr.TabItem(label, id=ifid, elem_id='tab_' + ifid):
                     interface.render()
 
-        footer = shared.html("footer.html")
-        footer = footer.format(versions=versions_html())
-        gr.HTML(footer, elem_id="footer")
-
         text_settings = gr.Textbox(elem_id="settings_json", value=lambda: opts.dumpjson(), visible=False)
         settings_submit.click(
             fn=wrap_gradio_call(run_settings, extra_outputs=[gr.update()]),
@@ -1720,7 +1717,7 @@ def html_css():
             continue
         head += stylesheet(cssfile)
     if opts.gradio_theme == 'black-orange':
-        head += stylesheet(os.path.join(data_path, "javascript", "black-orange.css"))
+        head += stylesheet(os.path.join(script_path, "javascript", "black-orange.css"))
     if os.path.exists(os.path.join(data_path, "user.css")):
         head += stylesheet(os.path.join(data_path, "user.css"))
     return head
@@ -1743,32 +1740,3 @@ def reload_javascript():
 
 if not hasattr(shared, 'GradioTemplateResponseOriginal'):
     shared.GradioTemplateResponseOriginal = gradio.routes.templates.TemplateResponse
-
-
-def versions_html():
-    import torch
-    import launch
-
-    python_version = ".".join([str(x) for x in sys.version_info[0:3]])
-    commit = launch.commit_hash()
-    short_commit = commit[0:8]
-
-    if shared.xformers_available:
-        import xformers
-        xformers_version = xformers.__version__
-    else:
-        xformers_version = "N/A"
-
-    return f"""
-python: <span title="{sys.version}">{python_version}</span>
- • 
-torch: {getattr(torch, '__long_version__',torch.__version__)}
- • 
-xformers: {xformers_version}
- • 
-gradio: {gr.__version__}
- • 
-commit: <a href="https://github.com/vladmandic/automatic/commit/{commit}">{short_commit}</a>
- • 
-checkpoint: <a id="sd_checkpoint_hash">N/A</a>
-"""

@@ -27,6 +27,7 @@ import ldm.modules.encoders.modules # pylint: disable=W0611,C0411
 from modules import extra_networks, ui_extra_networks_checkpoints # pylint: disable=C0411,C0412
 from modules import extra_networks_hypernet, ui_extra_networks_hypernets, ui_extra_networks_textual_inversion
 from modules.call_queue import wrap_queued_call, queue_lock, wrap_gradio_gpu_call # pylint: disable=W0611,C0411
+from modules.paths import create_paths
 
 # Truncate version number of nightly/local build of PyTorch to not cause exceptions with CodeFormer or Safetensors
 if ".dev" in torch.__version__ or "+git" in torch.__version__:
@@ -63,7 +64,19 @@ else:
     server_name = "0.0.0.0" if cmd_opts.listen else None
 
 
+def check_rollback_vae():
+    if shared.cmd_opts.rollback_vae:
+        if not torch.__version__.startswith('2.1'):
+            print("Rollback VAE functionality requires Torch 2.1 or higher")
+            shared.cmd_opts.rollback_vae = False
+        if 0 < torch.cuda.get_device_capability()[0] < 8:
+            print('Rollback VAE functionality device capabilities not met')
+            shared.cmd_opts.rollback_vae = False
+
+
 def initialize():
+    check_rollback_vae()
+
     extensions.list_extensions()
     startup_timer.record("extensions")
 
@@ -152,8 +165,8 @@ def create_api(app):
 
 def start_ui():
     logging.disable(logging.INFO)
+    create_paths(opts)
     initialize()
-    ui_tempdir.on_tmpdir_changed()
     if shared.opts.clean_temp_dir_at_start:
         ui_tempdir.cleanup_tmpdr()
         startup_timer.record("cleanup")
@@ -201,9 +214,10 @@ def start_ui():
 
 def webui():
     start_ui()
-
     load_model()
     print(f"Startup time: {startup_timer.summary()}")
+    logging.disable(logging.DEBUG)
+
 
     while True:
         try:

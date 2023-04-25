@@ -1,7 +1,6 @@
 import sys
 import contextlib
 import torch
-from modules import errors
 
 if sys.platform == "darwin":
     from modules import mac_specific
@@ -23,20 +22,16 @@ def extract_device_id(args, name):
 
 def get_cuda_device_string():
     from modules import shared
-
     if shared.cmd_opts.device_id is not None:
         return f"cuda:{shared.cmd_opts.device_id}"
-
     return "cuda"
 
 
 def get_optimal_device_name():
     if torch.cuda.is_available():
         return get_cuda_device_string()
-
     if has_mps():
         return "mps"
-
     return "cpu"
 
 
@@ -46,10 +41,8 @@ def get_optimal_device():
 
 def get_device_for(task):
     from modules import shared
-
     if task in shared.cmd_opts.use_cpu:
         return cpu
-
     return get_optimal_device()
 
 
@@ -60,23 +53,40 @@ def torch_gc():
             torch.cuda.ipc_collect()
 
 
-def enable_tf32():
-    if torch.cuda.is_available():
-        torch.backends.cuda.matmul.allow_tf32 = True
-        torch.backends.cudnn.allow_tf32 = True
-
-
-def enable_cudnn_benchmark():
+def set_cuda_params():
     from modules import shared
+    if torch.cuda.is_available():
+        try:
+            torch.backends.cuda.matmul.allow_tf32 = shared.opts.cuda_allow_tf32
+            torch.backends.cuda.matmul.allow_fp16_reduced_precision_reduction = shared.opts.cuda_allow_tf16_reduced
+            torch.backends.cuda.matmul.allow_bf16_reduced_precision_reduction = shared.opts.cuda_allow_tf16_reduced
+        except:
+            pass
+        if torch.backends.cudnn.is_available():
+            try:
+                torch.backends.cudnn.benchmark = shared.opts.cudnn_benchmark
+                torch.backends.cudnn.benchmark_limit = 0
+                torch.backends.cudnn.allow_tf32 = shared.opts.cuda_allow_tf32
+            except:
+                pass
+    global dtype, dtype_vae, dtype_unet, unet_needs_upcast # pylint: disable=global-statement
+    # set dtype
+    if shared.opts.cuda_dtype == 'FP16':
+        dtype = torch.float16
+        dtype_vae = torch.float16
+        dtype_unet = torch.float16
+    if shared.opts.cuda_dtype == 'BP16':
+        dtype = torch.bfloat16
+        dtype_vae = torch.bfloat16
+        dtype_unet = torch.bfloat16
+    if shared.opts.cuda_dtype == 'FP32' or shared.opts.no_half:
+        dtype = torch.float32
+        dtype_vae = torch.float32
+        dtype_unet = torch.float32
+    if shared.opts.no_half_vae: # set dtype again as no-half-vae options take priority
+        dtype_vae = torch.float32
+    unet_needs_upcast = shared.opts.upcast_sampling
 
-    if shared.opts.cudnn_benchmark:
-        torch.backends.cudnn.benchmark = True
-    else:
-        torch.backends.cudnn.benchmark = False
-
-
-
-errors.run(enable_tf32, "Enabling TF32")
 
 cpu = torch.device("cpu")
 device = device_interrogate = device_gfpgan = device_esrgan = device_codeformer = None
@@ -111,7 +121,7 @@ def autocast(disable=False):
     from modules import shared
     if disable:
         return contextlib.nullcontext()
-    if dtype == torch.float32 or shared.cmd_opts.precision == "full":
+    if dtype == torch.float32 or shared.cmd_opts.precision == "Full":
         return contextlib.nullcontext()
     return torch.autocast("cuda")
 

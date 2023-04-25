@@ -10,10 +10,6 @@ parser.add_argument("--ui-config-file", type=str, help=argparse.SUPPRESS, defaul
 parser.add_argument("--config", type=str, default=sd_default_config, help=argparse.SUPPRESS)
 parser.add_argument("--theme", type=str, help=argparse.SUPPRESS, default=None)
 
-parser.add_argument("--no-half", action='store_true', help="Do not switch the model to 16-bit floats")
-parser.add_argument("--no-half-vae", action='store_true', help="Do not switch the VAE model to 16-bit floats")
-parser.add_argument("--precision", type=str, help="Evaluate at this precision", choices=["full", "autocast"], default="autocast")
-
 parser.add_argument("--medvram", action='store_true', help="Enable model optimizations for sacrificing a little speed for low memory usage")
 parser.add_argument("--lowvram", action='store_true', help="Enable model optimizations for sacrificing a lot of speed for lowest memory usage")
 parser.add_argument("--lowram", action='store_true', help="Load checkpoint weights to VRAM instead of RAM")
@@ -21,6 +17,7 @@ parser.add_argument("--lowram", action='store_true', help="Load checkpoint weigh
 parser.add_argument("--ckpt", type=str, default=sd_model_file, help="Path to checkpoint of stable diffusion model to load immediately",)
 parser.add_argument('--vae', type=str, help='Path to checkpoint of stable diffusion VAE model to load immediately', default=None)
 parser.add_argument("--data-dir", type=str, default=os.path.dirname(os.path.dirname(os.path.realpath(__file__))), help="Base path where all user data is stored")
+parser.add_argument("--models-dir", type=str, default="models", help="Nase path where all models are stored",)
 
 parser.add_argument("--allow-code", action='store_true', help="Allow custom script execution")
 parser.add_argument("--share", action='store_true', help="Enable to make the UI accessible through Gradio site")
@@ -60,14 +57,28 @@ def compatibility_args(opts, args):
     parser.add_argument("--esrgan-models-path", type=str, help=argparse.SUPPRESS, default=opts.esrgan_models_path)
     parser.add_argument("--bsrgan-models-path", type=str, help=argparse.SUPPRESS, default=opts.bsrgan_models_path)
     parser.add_argument("--realesrgan-models-path", type=str, help=argparse.SUPPRESS, default=opts.realesrgan_models_path)
+    parser.add_argument("--scunet-models-path", help=argparse.SUPPRESS, default=opts.scunet_models_path)
+    parser.add_argument("--swinir-models-path", help=argparse.SUPPRESS, default=opts.swinir_models_path)
+    parser.add_argument("--ldsr-models-path", help=argparse.SUPPRESS, default=opts.ldsr_models_path)
     parser.add_argument("--clip-models-path", type=str, help=argparse.SUPPRESS, default=opts.clip_models_path)
-    parser.add_argument("--disable-nan-check", default = True, action='store_true', help=argparse.SUPPRESS)
     parser.add_argument("--disable-extension-access", default = False, action='store_true', help=argparse.SUPPRESS)
     parser.add_argument("--opt-channelslast", help=argparse.SUPPRESS, default=opts.opt_channelslast)
     parser.add_argument("--xformers", default = (opts.cross_attention_optimization == "xFormers"), action='store_true', help=argparse.SUPPRESS)
+    parser.add_argument("--disable-nan-check", help=argparse.SUPPRESS, default=opts.disable_nan_check)
+    parser.add_argument("--token-merging", help=argparse.SUPPRESS, default=opts.token_merging)
+    parser.add_argument("--rollback-vae", help=argparse.SUPPRESS, default=opts.rollback_vae)
+    parser.add_argument("--no-half", help=argparse.SUPPRESS, default=opts.no_half)
+    parser.add_argument("--no-half-vae", help=argparse.SUPPRESS, default=opts.no_half_vae)
+    parser.add_argument("--precision", help=argparse.SUPPRESS, default=opts.precision)
+    parser.add_argument("--api", help=argparse.SUPPRESS, default=True)
+
+    opts.use_old_emphasis_implementation = False
+    opts.use_old_karras_scheduler_sigmas = False
+    opts.no_dpmpp_sde_batch_determinism = False
+    opts.use_old_hires_fix_width_height = False
+
+    parser.add_argument("--lora-dir", help=argparse.SUPPRESS, default=opts.lora_dir)
     args = parser.parse_args()
-    if vars(parser)['_option_string_actions'].get('--lora-dir', None) is not None:
-        args.lora_dir = opts.lora_dir
-    if vars(parser)['_option_string_actions'].get('--lyco-dir', None) is not None:
+    if 'lyco_dir' in args:
         args.lyco_dir = opts.lyco_dir
     return args

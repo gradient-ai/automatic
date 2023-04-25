@@ -4,26 +4,30 @@
 
 Stuff to be fixed...
 
-- Fix integration with <https://github.com/deforum-art/deforum-for-automatic1111-webui>
+- ClipSkip not updated on read gen info
+- Run VAE with hires at 1280
+- Transformers version
+- Move Restart Server from WebUI to Launch and reload modules
+- gr.Dropdowns with None selected
 
 ## Features
 
 Stuff to be added...
 
+- Add Gradio theme maker
 - Create new GitHub hooks/actions for CI/CD  
-- Move Restart Server from WebUI to Launch and reload modules
 - Redo Extensions tab: see <https://vladmandic.github.io/sd-extension-manager/pages/extensions.html>
 - Stream-load models as option for slow storage
-- Replace **PngInfo** / **EXIF** metadata handler
-- Investigate integration with `Torch-DirectML`
-- Investigate best practices for **Apple M1**
-- Investigate best practices for **AMD GPUs**
+- Autodetect nVidia and AMD: `nvidia-smi` vs `rocm-smi`
+- [Temporal Weighing](https://github.com/comfyanonymous/ComfyUI/discussions/473)
 
 ## Investigate
 
 Stuff to be investigated...
 
-- Revisit `torch.compile`
+- Torch Compile
+- `Torch-DirectML`
+- `TensorRT`
 
 ## Merge PRs
 
@@ -54,3 +58,4 @@ Tech that can be integrated as part of the core workflow...
 
 ### Pending Code Updates
 
+- update GPU utility search paths for better GPU type detection

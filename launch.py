@@ -2,24 +2,29 @@ import subprocess
 import os
 import sys
 import shlex
+import logging
 import setup
-from modules import cmd_args
-from modules.paths_internal import script_path
+import modules.paths_internal
+import modules.cmd_args
 
-try:
-    from rich import print # pylint: disable=redefined-builtin
-except ImportError:
-    pass
+setup.ensure_base_requirements()
+from rich import print # pylint: disable=redefined-builtin,wrong-import-order
 
+### majority of this file is superflous, but used by some extensions as helpers during extension installation
 
 commandline_args = os.environ.get('COMMANDLINE_ARGS', "")
 sys.argv += shlex.split(commandline_args)
+setup.extensions_preload(force=False)
 setup.parse_args()
-args, _ = cmd_args.parser.parse_known_args()
+args, _ = modules.cmd_args.parser.parse_known_args()
+script_path = modules.paths_internal.script_path
+extensions_dir = modules.paths_internal.extensions_dir
 git = os.environ.get('GIT', "git")
 index_url = os.environ.get('INDEX_URL', "")
 stored_commit_hash = None
 dir_repos = "repositories"
+python = sys.executable # used by some extensions to run python
+skip_install = False # parsed by some extensions
 
 
 def commit_hash():
@@ -68,6 +73,8 @@ def run_python(code, desc=None, errdesc=None):
 
 
 def run_pip(pkg, desc=None):
+    if desc is None:
+        desc = pkg
     index_url_line = f' --index-url {index_url}' if index_url != '' else ''
     return run(f'"{sys.executable}" -m pip {pkg} --prefer-binary{index_url_line}', desc=f"Installing {desc}", errdesc=f"Couldn't install {desc}")
 
@@ -83,12 +90,12 @@ def git_clone(url, tgt, _name, commithash=None):
 def run_extension_installer(ext_dir):
     setup.run_extension_installer(ext_dir)
 
-
 if __name__ == "__main__":
     setup.run_setup()
     setup.set_environment()
-    setup.check_torch()
+    setup.extensions_preload(force=True)
     setup.log.info(f"Server arguments: {sys.argv[1:]}")
     setup.log.debug('Starting WebUI')
+    logging.disable(logging.INFO)
     import webui
     webui.webui()

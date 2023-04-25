@@ -1,3 +1,8 @@
+[![](https://img.shields.io/static/v1?label=Sponsor&message=%E2%9D%A4&logo=GitHub&color=%23fe8e86)](https://github.com/sponsors/vladmandic)
+![Last Commit](https://img.shields.io/github/last-commit/vladmandic/human?style=flat-square&svg=true)
+![License](https://img.shields.io/github/license/vladmandic/human?style=flat-square&svg=true)
+![GitHub Status Checks](https://img.shields.io/github/checks-status/vladmandic/human/main?style=flat-square&svg=true)
+
 # Stable Diffusion - Automatic
 
 *Heavily opinionated custom fork of* <https://github.com/AUTOMATIC1111/stable-diffusion-webui>  
@@ -24,9 +29,9 @@ If you are looking an amazing simple-to-use Stable Diffusion tool, I'd suggest [
 ### Fork does differ in few things
 
 - New installer  
-- New logger  
-- New error and exception handlers  
-- Enhanced environment tuning  
+- Advanced CUDA tuning  
+  Available in UI Settings
+- Advanced environment tuning  
 - Optimized startup and models lazy-loading  
 - Built-in performance profiler  
 - Updated libraries to latest known compatible versions  
@@ -40,6 +45,8 @@ If you are looking an amazing simple-to-use Stable Diffusion tool, I'd suggest [
 - Built-in `LoRA`, `LyCORIS`, `Custom Diffusion`, `Dreambooth` training  
 - Majority of settings configurable via UI without the need for command line flags  
   e.g, cross-optimization methods, system folders, etc.  
+- New logger  
+- New error and exception handlers  
 
 ### Optimizations
 

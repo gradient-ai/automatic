@@ -23,6 +23,7 @@ log = logging.getLogger("sd")
 args = Dot({ 'debug': False, 'upgrade': False, 'noupdate': False, 'skip-extensions': False, 'skip-requirements': False, 'reset': False })
 quick_allowed = True
 errors = 0
+opts = {}
 
 
 # setup console and file logging
@@ -34,27 +35,21 @@ def setup_logging(clean=False):
     except:
         pass
     logging.basicConfig(level=logging.DEBUG, format='%(asctime)s | %(levelname)s | %(pathname)s | %(message)s', filename='setup.log', filemode='a', encoding='utf-8', force=True)
-    try: # we may not have rich on the first run
-        from rich.theme import Theme
-        from rich.logging import RichHandler
-        from rich.console import Console
-        from rich.pretty import install as pretty_install
-        from rich.traceback import install as traceback_install
-        console = Console(log_time=True, log_time_format='%H:%M:%S-%f', theme=Theme({
-            "traceback.border": "black",
-            "traceback.border.syntax_error": "black",
-            "inspect.value.border": "black",
-        }))
-        pretty_install(console=console)
-        traceback_install(console=console, extra_lines=1, width=console.width, word_wrap=False, indent_guides=False, suppress=[])
-        rh = RichHandler(show_time=True, omit_repeated_times=False, show_level=True, show_path=False, markup=False, rich_tracebacks=True, log_time_format='%H:%M:%S-%f', level=logging.DEBUG if args.debug else logging.INFO, console=console)
-        rh.set_name(logging.DEBUG if args.debug else logging.INFO)
-        log.addHandler(rh)
-    except:
-        sh = logging.StreamHandler()
-        sh.setLevel(logging.DEBUG if args.debug else logging.INFO)
-        log.addHandler(sh)
-
+    from rich.theme import Theme
+    from rich.logging import RichHandler
+    from rich.console import Console
+    from rich.pretty import install as pretty_install
+    from rich.traceback import install as traceback_install
+    console = Console(log_time=True, log_time_format='%H:%M:%S-%f', theme=Theme({
+        "traceback.border": "black",
+        "traceback.border.syntax_error": "black",
+        "inspect.value.border": "black",
+    }))
+    pretty_install(console=console)
+    traceback_install(console=console, extra_lines=1, width=console.width, word_wrap=False, indent_guides=False, suppress=[])
+    rh = RichHandler(show_time=True, omit_repeated_times=False, show_level=True, show_path=False, markup=False, rich_tracebacks=True, log_time_format='%H:%M:%S-%f', level=logging.DEBUG if args.debug else logging.INFO, console=console)
+    rh.set_name(logging.DEBUG if args.debug else logging.INFO)
+    log.addHandler(rh)
 
 # check if package is installed
 def installed(package, friendly: str = None):
@@ -62,11 +57,15 @@ def installed(package, friendly: str = None):
     ok = True
     try:
         if friendly:
-            pkgs = [friendly]
+            pkgs = friendly.split()
         else:
-            pkgs = [p for p in package.split() if not p.startswith('-') and not p.startswith('git+') and not p.startswith('http') and not p.startswith('=')]
+            pkgs = [p for p in package.split() if not p.startswith('-') and not p.startswith('=')]
+            pkgs = [p.split('/')[-1] for p in pkgs] # get only package name if installing from url
         for pkg in pkgs:
-            p = pkg.split('==')
+            if '>=' in pkg:
+                p = pkg.split('>=')
+            else:
+                p = pkg.split('==')
             spec = pkg_resources.working_set.by_key.get(p[0], None) # more reliable than importlib
             if spec is None:
                 spec = pkg_resources.working_set.by_key.get(p[0].lower(), None) # check name variations
@@ -91,6 +90,8 @@ def installed(package, friendly: str = None):
 # install package using pip if not already installed
 def install(package, friendly: str = None, ignore: bool = False):
     def pip(arg: str):
+        arg = arg.replace('>=', '==')
+        log.info(f'Installing package: {arg.replace("install", "").replace("--upgrade", "").replace("--no-deps", "").replace("  ", " ").strip()}')
         log.debug(f"Running pip: {arg}")
         result = subprocess.run(f'"{sys.executable}" -m pip {arg}', shell=True, check=False, env=os.environ, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         txt = result.stdout.decode(encoding="utf8", errors="ignore")
@@ -100,7 +101,7 @@ def install(package, friendly: str = None, ignore: bool = False):
         if result.returncode != 0 and not ignore:
             global errors # pylint: disable=global-statement
             errors += 1
-            log.error(f'Error running pip with args: {arg}')
+            log.error(f'Error running pip: {arg}')
             log.debug(f'Pip output: {txt}')
         return txt
 
@@ -109,11 +110,11 @@ def install(package, friendly: str = None, ignore: bool = False):
 
 
 # execute git command
-def git(arg: str, ignore: bool = False):
+def git(arg: str, folder: str = None, ignore: bool = False):
     if args.skip_git:
         return ''
     git_cmd = os.environ.get('GIT', "git")
-    result = subprocess.run(f'"{git_cmd}" {arg}', check=False, shell=True, env=os.environ, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    result = subprocess.run(f'"{git_cmd}" {arg}', check=False, shell=True, env=os.environ, stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=folder or '.')
     txt = result.stdout.decode(encoding="utf8", errors="ignore")
     if len(result.stderr) > 0:
         txt += ('\n' if len(txt) > 0 else '') + result.stderr.decode(encoding="utf8", errors="ignore")
@@ -121,7 +122,7 @@ def git(arg: str, ignore: bool = False):
     if result.returncode != 0 and not ignore:
         global errors # pylint: disable=global-statement
         errors += 1
-        log.error(f'Error running git with args: {arg}')
+        log.error(f'Error running git: {folder} / {arg}')
         if 'or stash them' in txt:
             log.error('Local changes detected: check setup.log for details')
         log.debug(f'Git output: {txt}')
@@ -130,15 +131,23 @@ def git(arg: str, ignore: bool = False):
 
 # update switch to main branch as head can get detached and update repository
 def update(folder):
-    branch = git(f'-C "{folder}" branch')
+    if not os.path.exists(os.path.join(folder, '.git')):
+        return
+    branch = git('branch', folder)
     if 'main' in branch:
-        git(f'-C "{folder}" checkout main')
+        git('checkout main', folder)
+        branch = 'main'
     elif 'master' in branch:
-        git(f'-C "{folder}" checkout master')
+        git('checkout master', folder)
+        branch = 'master'
     else:
         log.warning(f'Unknown branch for: {folder}')
-    git(f'-C "{folder}" pull --rebase --autostash')
-    branch = git(f'-C "{folder}" branch')
+        branch = None
+    if branch is None:
+        git('pull --autostash --rebase', folder)
+    else:
+        git(f'pull origin {branch} --autostash --rebase', folder)
+    # branch = git('branch', folder)
 
 
 # clone git repository
@@ -146,10 +155,10 @@ def clone(url, folder, commithash=None):
     if os.path.exists(folder):
         if commithash is None:
             return
-        current_hash = git(f'-C "{folder}" rev-parse HEAD').strip()
+        current_hash = git('rev-parse HEAD', folder).strip()
         if current_hash != commithash:
-            git(f'-C "{folder}" fetch')
-            git(f'-C "{folder}" checkout {commithash}')
+            git('fetch', folder)
+            git(f'checkout {commithash}', folder)
             return
     else:
         git(f'clone "{url}" "{folder}"')
@@ -160,40 +169,66 @@ def clone(url, folder, commithash=None):
 # check python version
 def check_python():
     import platform
-    supported_minors = [9, 10] if platform.system() != "Windows" else [9, 10, 11]
+    supported_minors = [9, 10]
+    if args.experimental:
+        supported_minors.append(11)
     log.info(f'Python {platform.python_version()} on {platform.system()}')
     if not (int(sys.version_info.major) == 3 and int(sys.version_info.minor) in supported_minors):
-        raise RuntimeError(f"Incompatible Python version: {sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro} required 3.9-3.11")
+        log.error(f"Incompatible Python version: {sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro} required 3.{supported_minors}")
+        exit(1)
     git_cmd = os.environ.get('GIT', "git")
     if shutil.which(git_cmd) is None:
-        raise RuntimeError('Git not found')
+        log.error('Git not found')
+        exit(1)
+    else:
+        git_version = git('--version', folder=None, ignore=False)
+        log.debug(f'Git {git_version.replace("git version", "").strip()}')
 
 
 # check torch version
 def check_torch():
-    torch_command = os.environ.get('TORCH_COMMAND', 'torch torchaudio torchvision --index-url https://download.pytorch.org/whl/cu118')
+    if shutil.which('nvidia-smi') is not None or os.path.exists(os.path.join(os.environ.get('SystemRoot') or r'C:\Windows', 'System32', 'nvidia-smi.exe')):
+        log.info('nVidia toolkit detected')
+        torch_command = os.environ.get('TORCH_COMMAND', 'torch torchaudio torchvision --index-url https://download.pytorch.org/whl/cu118')
+        xformers_package = os.environ.get('XFORMERS_PACKAGE', 'xformers==0.0.17' if opts.get('cross_attention_optimization', '') == 'xFormers' else 'none')
+    elif shutil.which('rocminfo') is not None or os.path.exists('/opt/rocm/bin/rocminfo'):
+        log.info('AMD toolkit detected')
+        os.environ.setdefault('HSA_OVERRIDE_GFX_VERSION', '10.3.0')
+        torch_command = os.environ.get('TORCH_COMMAND', 'torch torchvision torchaudio --index-url https://download.pytorch.org/whl/rocm5.4.2')
+        xformers_package = os.environ.get('XFORMERS_PACKAGE', 'none')
+    else:
+        log.info('Using CPU-only Torch')
+        torch_command = os.environ.get('TORCH_COMMAND', 'torch torchaudio torchvision')
+        xformers_package = os.environ.get('XFORMERS_PACKAGE', 'none')
     if 'torch' in torch_command:
-        install(torch_command)
+        install(torch_command, 'torch torchvision torchaudio')
     try:
         import torch
         log.info(f'Torch {torch.__version__}')
         if not torch.cuda.is_available():
             log.warning("Torch repoorts CUDA not available")
-            if '--no-half' not in sys.argv:
-                sys.argv.append('--no-half')
-            if '--no-half-vae' not in sys.argv:
-                sys.argv.append('--no-half-vae')
         else:
             if torch.version.cuda:
-                log.info(f'Torch backend: nVidia CUDA {torch.version.cuda} cuDNN {torch.backends.cudnn.version()}')
+                log.info(f'Torch backend: nVidia CUDA {torch.version.cuda} cuDNN {torch.backends.cudnn.version() if torch.backends.cudnn.is_available() else "N/A"}')
             elif torch.version.hip:
                 log.info(f'Torch backend: AMD ROCm HIP {torch.version.hip}')
             else:
                 log.warning('Unknown Torch backend')
             for device in [torch.cuda.device(i) for i in range(torch.cuda.device_count())]:
                 log.info(f'Torch detected GPU: {torch.cuda.get_device_name(device)} VRAM {round(torch.cuda.get_device_properties(device).total_memory / 1024 / 1024)} Arch {torch.cuda.get_device_capability(device)} Cores {torch.cuda.get_device_properties(device).multi_processor_count}')
-    except:
-        pass
+    except Exception as e:
+        log.error(f'Could not load torch: {e}')
+        exit(1)
+    try:
+        if 'xformers' in xformers_package:
+            install(f'--no-deps {xformers_package}', ignore=True)
+    except Exception as e:
+        log.debug(f'Cannot install xformers package: {e}')
+    try:
+        tensorflow_package = os.environ.get('TENSORFLOW_PACKAGE', 'tensorflow==2.12.0')
+        install(tensorflow_package, 'tensorflow', ignore=True)
+    except Exception as e:
+        log.debug(f'Cannot install tensorflow package: {e}')
 
 
 # install required packages
@@ -205,19 +240,12 @@ def install_packages():
     # install(openclip_package, 'open-clip-torch')
     clip_package = os.environ.get('CLIP_PACKAGE', "git+https://github.com/openai/CLIP.git@d50d76daa670286dd6cacf3bcd80b5e4823fc8e1")
     install(clip_package, 'clip')
-    try:
-        xformers_package = os.environ.get('XFORMERS_PACKAGE', 'xformers==0.0.17')
-        if 'xformers' in xformers_package:
-            install(f'--no-deps {xformers_package}', ignore=True)
-    except Exception as e:
-        log.debug(f'Cannot install xformers package: {e}')
 
 
 # clone required repositories
 def install_repositories():
     def d(name):
         return os.path.join(os.path.dirname(__file__), 'repositories', name)
-
     log.info('Installing repositories')
     os.makedirs(os.path.join(os.path.dirname(__file__), 'repositories'), exist_ok=True)
     stable_diffusion_repo = os.environ.get('STABLE_DIFFUSION_REPO', "https://github.com/Stability-AI/stablediffusion.git")
@@ -243,10 +271,10 @@ def run_extension_installer(folder):
     if not os.path.isfile(path_installer):
         return
     try:
-        log.debug(f"Running extension installer: {path_installer}")
+        log.debug(f"Running extension installer: {folder} / {path_installer}")
         env = os.environ.copy()
         env['PYTHONPATH'] = os.path.abspath(".")
-        result = subprocess.run(f'"{sys.executable}" "{path_installer}"', shell=True, env=env, check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        result = subprocess.run(f'"{sys.executable}" "{path_installer}"', shell=True, env=env, check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=folder)
         if result.returncode != 0:
             global errors # pylint: disable=global-statement
             errors += 1
@@ -260,14 +288,10 @@ def run_extension_installer(folder):
 
 # get list of all enabled extensions
 def list_extensions(folder):
-    settings = {}
-    if os.path.isfile('config.json'):
-        with open('config.json', "r", encoding="utf8") as file:
-            settings = json.load(file)
-    if settings.get('disable_all_extensions', 'none') != 'none':
+    if opts.get('disable_all_extensions', 'none') != 'none':
         log.debug('Disabled extensions: all')
         return []
-    disabled_extensions = set(settings.get('disabled_extensions', []))
+    disabled_extensions = set(opts.get('disabled_extensions', []))
     if len(disabled_extensions) > 0:
         log.debug(f'Disabled extensions: {disabled_extensions}')
     return [x for x in os.listdir(folder) if x not in disabled_extensions and not x.startswith('.')]
@@ -275,34 +299,37 @@ def list_extensions(folder):
 
 # run installer for each installed and enabled extension and optionally update them
 def install_extensions():
-    for folder in ['extensions-builtin', 'extensions']:
-        extensions_dir = os.path.join(os.path.dirname(__file__), folder)
-        extensions = list_extensions(extensions_dir)
+    from modules.paths_internal import extensions_builtin_dir, extensions_dir
+    for folder in [extensions_builtin_dir, extensions_dir]:
+        if not os.path.isdir(folder):
+            continue
+        extensions = list_extensions(folder)
         log.info(f'Extensions enabled: {extensions}')
         for ext in extensions:
             if not args.noupdate:
                 try:
-                    update(os.path.join(extensions_dir, ext))
+                    update(os.path.join(folder, ext))
                 except:
-                    log.error(f'Error updating extension: {os.path.join(extensions_dir, ext)}')
+                    log.error(f'Error updating extension: {os.path.join(folder, ext)}')
             if not args.skip_extensions:
-                run_extension_installer(os.path.join(extensions_dir, ext))
+                run_extension_installer(os.path.join(folder, ext))
 
 
 # initialize and optionally update submodules
 def install_submodules():
     log.info('Installing submodules')
     txt = git('submodule')
+    log.debug(f'Submodules list: {txt}')
     if 'no submodule mapping found' in txt:
         log.warning('Attempting repository recover')
         git('add .')
         git('stash')
-        git('merge --abort', ignore=True)
+        git('merge --abort', folder=None, ignore=True)
         git('fetch --all')
         git('reset --hard origin/master')
         git('checkout master')
         log.info('Continuing setup')
-    git('submodule --quiet update --init --recursive')
+    txt = git('submodule --quiet update --init --recursive')
     if not args.noupdate:
         log.info('Updating submodules')
         submodules = git('submodule').splitlines()
@@ -314,13 +341,23 @@ def install_submodules():
                 log.error(f'Error updating submodule: {submodule}')
 
 
-# install requirements
+def ensure_package(pkg):
+    try:
+        import pkg # type: ignore
+    except ImportError:
+        install(pkg)
+
+
+def ensure_base_requirements():
+    ensure_package('rich')
+
+
 def install_requirements():
     if args.skip_requirements:
         return
-    log.info('Installing requirements')
+    log.info('Verifying requirements')
     with open('requirements.txt', 'r', encoding='utf8') as f:
-        lines = [line.strip() for line in f.readlines() if line.strip() != '']
+        lines = [line.strip() for line in f.readlines() if line.strip() != '' and not line.startswith('#') and line is not None]
         for line in lines:
             install(line)
 
@@ -341,18 +378,21 @@ def set_environment():
     os.environ.setdefault('GRADIO_ANALYTICS_ENABLED', 'False')
     os.environ.setdefault('SAFETENSORS_FAST_GPU', '1')
     os.environ.setdefault('NUMEXPR_MAX_THREADS', '16')
+    os.environ.setdefault('PYTORCH_ENABLE_MPS_FALLBACK', '1')
 
 
 def check_extensions():
     newest_all = os.path.getmtime('requirements.txt')
-    for folder in ['extensions-builtin', 'extensions']:
-        extensions_dir = os.path.join(os.path.dirname(__file__), folder)
-        extensions = list_extensions(extensions_dir)
+    from modules.paths_internal import extensions_builtin_dir, extensions_dir
+    for folder in [extensions_builtin_dir, extensions_dir]:
+        if not os.path.isdir(folder):
+            continue
+        extensions = list_extensions(folder)
         for ext in extensions:
             newest = 0
-            extension_dir = os.path.join(extensions_dir, ext)
+            extension_dir = os.path.join(folder, ext)
             for f in os.listdir(extension_dir):
-                if '.json' in f or '.csv' in f:
+                if '.json' in f or '.csv' in f or '__pycache__' in f:
                     continue
                 ts = os.path.getmtime(os.path.join(extension_dir, f))
                 newest = max(newest, ts)
@@ -363,6 +403,13 @@ def check_extensions():
 
 # check version of the main repo and optionally upgrade it
 def check_version():
+    if not os.path.exists('.git'):
+        log.error('Not a git repository')
+        exit(1)
+    _status = git('status')
+    # if 'branch' not in status:
+    #    log.error('Cannot get git repository status')
+    #    exit(1)
     ver = git('log -1 --pretty=format:"%h %ad"')
     log.info(f'Version: {ver}')
     commit = git('rev-parse HEAD')
@@ -389,15 +436,18 @@ def check_version():
                     log.error('Error upgrading repository')
             else:
                 log.info(f'Latest published version: {commits["commit"]["sha"]} {commits["commit"]["commit"]["author"]["date"]}')
-        if not args.noupdate:
-            log.info('Updating Wiki')
-            try:
-                update(os.path.join(os.path.dirname(__file__), "wiki"))
-                update(os.path.join(os.path.dirname(__file__), "wiki", "origin-wiki"))
-            except:
-                log.error('Error updating wiki')
     except Exception as e:
         log.error(f'Failed to check version: {e} {commits}')
+
+
+def update_wiki():
+    if not args.noupdate:
+        log.info('Updating Wiki')
+        try:
+            update(os.path.join(os.path.dirname(__file__), "wiki"))
+            update(os.path.join(os.path.dirname(__file__), "wiki", "origin-wiki"))
+        except:
+            log.error('Error updating wiki')
 
 
 # check if we can run setup in quick mode
@@ -444,8 +494,25 @@ def parse_args():
     parser.add_argument('--skip-requirements', default = False, action='store_true', help = "Skips checking and installing requirements, default: %(default)s")
     parser.add_argument('--skip-extensions', default = False, action='store_true', help = "Skips running individual extension installers, default: %(default)s")
     parser.add_argument('--skip-git', default = False, action='store_true', help = "Skips running all GIT operations, default: %(default)s")
+    parser.add_argument('--experimental', default = False, action='store_true', help = "Allow unsupported versions of libraries, default: %(default)s")
     global args # pylint: disable=global-statement
     args = parser.parse_args()
+
+
+def extensions_preload(force = False):
+    setup_time = 0
+    if os.path.isfile('setup.log'):
+        with open('setup.log', 'r', encoding='utf8') as f:
+            lines = f.readlines()
+            for line in lines:
+                if 'Setup complete without errors' in line:
+                    setup_time = int(line.split(' ')[-1])
+    if setup_time > 0 or force:
+        log.info('Running extension preloading')
+        from modules.script_loading import preload_extensions
+        from modules.paths_internal import extensions_builtin_dir, extensions_dir
+        for ext_dir in [extensions_builtin_dir, extensions_dir]:
+            preload_extensions(ext_dir, parser)
 
 
 def git_reset():
@@ -459,33 +526,43 @@ def git_reset():
     log.info('GIT reset complete')
 
 
+def read_options():
+    global opts # pylint: disable=global-statement
+    if os.path.isfile(args.ui_settings_file):
+        with open(args.ui_settings_file, "r", encoding="utf8") as file:
+            opts = json.load(file)
+
+
 # entry method when used as module
 def run_setup():
     setup_logging(args.upgrade)
+    read_options()
     check_python()
     if args.reset:
         git_reset()
     if args.skip_git:
         log.info('Skipping GIT operations')
+    check_version()
+    check_torch()
+    install_requirements()
     if check_timestamp():
-        log.info('No changes detected: quick launch active')
+        log.info('No changes detected: Quick launch active')
         return
     log.info("Running setup")
     log.debug(f"Args: {vars(args)}")
-    check_version()
-    install_requirements()
     install_packages()
     install_repositories()
     install_submodules()
     install_extensions()
+    update_wiki()
     if errors == 0:
         log.debug(f'Setup complete without errors: {round(time.time())}')
     else:
         log.warning(f'Setup complete with errors ({errors})')
+        log.warning('See log file for more details: setup.log')
 
 
 if __name__ == "__main__":
     parse_args()
     run_setup()
     set_environment()
-    check_torch()

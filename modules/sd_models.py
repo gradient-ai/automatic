@@ -10,9 +10,9 @@ from rich import print, progress # pylint: disable=redefined-builtin
 import torch
 import safetensors.torch
 from omegaconf import OmegaConf
+import tomesd
 import ldm.modules.midas as midas
 from ldm.util import instantiate_from_config
-
 from modules import paths, shared, modelloader, devices, script_callbacks, sd_vae, sd_disable_initialization, errors, hashes, sd_models_config
 from modules.sd_hijack_inpainting import do_inpainting_hijack
 from modules.timer import Timer
@@ -102,6 +102,8 @@ def checkpoint_tiles():
 
 
 def list_models():
+    global model_path # pylint: disable=global-statement
+    model_path = shared.opts.ckpt_dir
     checkpoints_list.clear()
     checkpoint_aliases.clear()
     model_list = modelloader.load_models(model_path=model_path, model_url=None, command_path=shared.opts.ckpt_dir, ext_filter=[".ckpt", ".safetensors"], download_name=None, ext_blacklist=[".vae.ckpt", ".vae.safetensors"])
@@ -118,7 +120,7 @@ def list_models():
     if len(checkpoints_list) == 0:
         if not shared.cmd_opts.no_download_sd_model:
             key = input('Download the default model? (y/N) ')
-            if key.lower().startswith == 'y':
+            if key.lower().startswith('y'):
                 model_url = "https://huggingface.co/runwayml/stable-diffusion-v1-5/resolve/main/v1-5-pruned-emaonly.safetensors"
                 model_list = modelloader.load_models(model_path=model_path, model_url=model_url, command_path=shared.opts.ckpt_dir, ext_filter=[".ckpt", ".safetensors"], download_name="v1-5-pruned-emaonly.safetensors", ext_blacklist=[".vae.ckpt", ".vae.safetensors"])
                 for filename in sorted(model_list, key=str.lower):
@@ -162,6 +164,7 @@ def select_checkpoint():
 
     if len(checkpoints_list) == 0:
         print("Cannot run without a checkpoint", file=sys.stderr)
+        print("Use --ckpt <path-to-checkpoint> to force using existing checkpoint", file=sys.stderr)
         exit(1)
 
     checkpoint_info = next(iter(checkpoints_list.values()))
@@ -227,7 +230,7 @@ def read_metadata_from_safetensors(filename):
         return res
 
 
-def read_state_dict(checkpoint_file):
+def read_state_dict(checkpoint_file, map_location=None): # pylint: disable=unused-argument
     try:
         with progress.open(checkpoint_file, 'rb', description=f'Loading weights: [cyan]{checkpoint_file}', auto_refresh=True) as f:
             _, extension = os.path.splitext(checkpoint_file)
@@ -299,11 +302,8 @@ def load_model_weights(model, checkpoint_info: CheckpointInfo, state_dict, timer
         if depth_model:
             model.depth_model = depth_model
 
-    devices.dtype = torch.float32 if shared.cmd_opts.no_half else torch.float16
-    devices.dtype_vae = torch.float32 if shared.cmd_opts.no_half or shared.cmd_opts.no_half_vae else torch.float16
+    devices.set_cuda_params()
     devices.dtype_unet = model.model.diffusion_model.dtype
-    devices.unet_needs_upcast = shared.opts.upcast_sampling and devices.dtype == torch.float16 and devices.dtype_unet == torch.float16
-
     model.first_stage_model.to(devices.dtype_vae)
 
     # clean up cache if limit is reached
@@ -369,7 +369,7 @@ def enable_midas_autodownload():
 
 def repair_config(sd_config):
 
-    if not hasattr(sd_config.model.params, "use_ema"):
+    if not "use_ema" in sd_config.model.params:
         sd_config.model.params.use_ema = False
 
     if shared.cmd_opts.no_half:
@@ -381,7 +381,7 @@ def repair_config(sd_config):
         sd_config.model.params.first_stage_config.params.ddconfig.attn_type = "vanilla"
 
     # For UnCLIP-L, override the hardcoded karlo directory
-    if hasattr(sd_config.model.params, "noise_aug_config") and hasattr(sd_config.model.params.noise_aug_config.params, "clip_stats_path"):
+    if "noise_aug_config" in sd_config.model.params and "clip_stats_path" in sd_config.model.params.noise_aug_config.params:
         karlo_path = os.path.join(paths.models_path, 'karlo')
         sd_config.model.params.noise_aug_config.params.clip_stats_path = sd_config.model.params.noise_aug_config.params.clip_stats_path.replace("checkpoints/karlo_models", karlo_path)
 
@@ -402,8 +402,6 @@ def load_model(checkpoint_info=None, already_loaded_state_dict=None):
         current_checkpoint_info = shared.sd_model.sd_checkpoint_info
         sd_hijack.model_hijack.undo_hijack(shared.sd_model)
         shared.sd_model = None
-
-    devices.enable_cudnn_benchmark()
     gc.collect()
     devices.torch_gc()
 
@@ -526,9 +524,7 @@ def reload_model_weights(sd_model=None, info=None):
 def unload_model_weights(sd_model=None, _info=None):
     from modules import sd_hijack
     timer = Timer()
-
     if shared.sd_model:
-
         # shared.sd_model.cond_stage_model.to(devices.cpu)
         # shared.sd_model.first_stage_model.to(devices.cpu)
         shared.sd_model.to(devices.cpu)
@@ -538,7 +534,30 @@ def unload_model_weights(sd_model=None, _info=None):
         gc.collect()
         devices.torch_gc()
         torch.cuda.empty_cache()
-
     print(f"Unloaded weights {timer.summary()}")
-
     return sd_model
+
+
+def apply_token_merging(sd_model, hr: bool):
+    """
+    Applies speed and memory optimizations from tomesd.
+
+    Args:
+        hr (bool): True if called in the context of a high-res pass
+    """
+
+    ratio = shared.opts.token_merging_ratio
+    if hr:
+        ratio = shared.opts.token_merging_ratio_hr
+
+    tomesd.apply_patch(
+        sd_model,
+        ratio=ratio,
+        max_downsample=shared.opts.token_merging_maximum_down_sampling,
+        sx=shared.opts.token_merging_stride_x,
+        sy=shared.opts.token_merging_stride_y,
+        use_rand=shared.opts.token_merging_random,
+        merge_attn=shared.opts.token_merging_merge_attention,
+        merge_crossattn=shared.opts.token_merging_merge_cross_attention,
+        merge_mlp=shared.opts.token_merging_merge_mlp
+    )

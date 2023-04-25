@@ -32,6 +32,8 @@ venv
 /models/**/*
 /interrogate/**/*
 /train/log/**/*
+/textual_inversion/**/*
+/detected_maps/**/*
 /tmp
 /log
 /cert
@@ -39,10 +41,5 @@ venv
 
 # unexcluded so folders get created
 !/repositories/.placeholder
-!/extensions/.placeholder
-!/outputs/.placeholder
-!/models/.placeholder
-!/models/embeddings/.placeholder
-!/models/hypernetworks/.placeholder
 !/models/VAE-approx
 !/models/VAE-approx/model.pt
