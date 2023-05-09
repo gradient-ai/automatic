@@ -1,11 +1,10 @@
 import inspect
-from pydantic import BaseModel, Field, create_model
-from typing import Any, Optional
+from typing import Any, Optional, Dict, List
+from pydantic import BaseModel, Field, create_model # pylint: disable=no-name-in-module
 from typing_extensions import Literal
 from inflection import underscore
 from modules.processing import StableDiffusionProcessingTxt2Img, StableDiffusionProcessingImg2Img
-from modules.shared import sd_upscalers, opts, parser
-from typing import Dict, List
+import modules.shared as shared
 
 API_NOT_ALLOWED = [
     "self",
@@ -14,8 +13,6 @@ API_NOT_ALLOWED = [
     "outpath_samples",
     "outpath_grids",
     "sampler_index",
-    # "do_not_save_samples",
-    # "do_not_save_grid",
     "extra_generation_params",
     "overlay_images",
     "do_not_reload_embeddings",
@@ -48,7 +45,7 @@ class PydanticModelGenerator:
         class_instance = None,
         additional_fields = None,
     ):
-        def field_type_generator(k, v):
+        def field_type_generator(_k, v):
             # field_type = str if not overrides.get(k) else overrides[k]["type"]
             # print(k, v.annotation, v.default)
             field_type = v.annotation
@@ -76,23 +73,21 @@ class PydanticModelGenerator:
             for (k,v) in self._class_data.items() if k not in API_NOT_ALLOWED
         ]
 
-        for fields in additional_fields:
+        for fld in additional_fields:
             self._model_def.append(ModelDef(
-                field=underscore(fields["key"]),
-                field_alias=fields["key"],
-                field_type=fields["type"],
-                field_value=fields["default"],
-                field_exclude=fields["exclude"] if "exclude" in fields else False))
+                field=underscore(fld["key"]),
+                field_alias=fld["key"],
+                field_type=fld["type"],
+                field_value=fld["default"],
+                field_exclude=fld["exclude"] if "exclude" in fld else False))
 
     def generate_model(self):
         """
         Creates a pydantic BaseModel
         from the json and overrides provided at initialization
         """
-        fields = {
-            d.field: (d.field_type, Field(default=d.field_value, alias=d.field_alias, exclude=d.field_exclude)) for d in self._model_def
-        }
-        DynamicModel = create_model(self._model_name, **fields)
+        model_fields = { d.field: (d.field_type, Field(default=d.field_value, alias=d.field_alias, exclude=d.field_exclude)) for d in self._model_def }
+        DynamicModel = create_model(self._model_name, **model_fields)
         DynamicModel.__config__.allow_population_by_field_name = True
         DynamicModel.__config__.allow_mutation = True
         return DynamicModel
@@ -147,8 +142,8 @@ class ExtrasBaseRequest(BaseModel):
     upscaling_resize_w: int = Field(default=512, title="Target Width", ge=1, description="Target width for the upscaler to hit. Only used when resize_mode=1.")
     upscaling_resize_h: int = Field(default=512, title="Target Height", ge=1, description="Target height for the upscaler to hit. Only used when resize_mode=1.")
     upscaling_crop: bool = Field(default=True, title="Crop to fit", description="Should the upscaler crop the image to fit in the chosen size?")
-    upscaler_1: str = Field(default="None", title="Main upscaler", description=f"The name of the main upscaler to use, it has to be one of this list: {' , '.join([x.name for x in sd_upscalers])}")
-    upscaler_2: str = Field(default="None", title="Secondary upscaler", description=f"The name of the secondary upscaler to use, it has to be one of this list: {' , '.join([x.name for x in sd_upscalers])}")
+    upscaler_1: str = Field(default="None", title="Main upscaler", description=f"The name of the main upscaler to use, it has to be one of this list: {' , '.join([x.name for x in shared.sd_upscalers])}")
+    upscaler_2: str = Field(default="None", title="Secondary upscaler", description=f"The name of the secondary upscaler to use, it has to be one of this list: {' , '.join([x.name for x in shared.sd_upscalers])}")
     extras_upscaler_2_visibility: float = Field(default=0, title="Secondary upscaler visibility", ge=0, le=1, allow_inf_nan=False, description="Sets the visibility of secondary upscaler, values should be between 0 and 1.")
     upscale_first: bool = Field(default=False, title="Upscale first", description="Should the upscaler run before restoring faces?")
 
@@ -205,11 +200,11 @@ class PreprocessResponse(BaseModel):
     info: str = Field(title="Preprocess info", description="Response string from preprocessing task.")
 
 fields = {}
-for key, metadata in opts.data_labels.items():
-    value = opts.data.get(key)
-    optType = opts.typemap.get(type(metadata.default), type(value))
+for key, metadata in shared.opts.data_labels.items():
+    value = shared.opts.data.get(key)
+    optType = shared.opts.typemap.get(type(metadata.default), type(value))
 
-    if (metadata is not None):
+    if metadata is not None:
         fields.update({key: (Optional[optType], Field(
             default=metadata.default ,description=metadata.label))})
     else:
@@ -218,12 +213,13 @@ for key, metadata in opts.data_labels.items():
 OptionsModel = create_model("Options", **fields)
 
 flags = {}
-_options = vars(parser)['_option_string_actions']
+_options = vars(shared.parser)['_option_string_actions']
 for key in _options:
-    if(_options[key].dest != 'help'):
+    if _options[key].dest != 'help':
         flag = _options[key]
         _type = str
-        if _options[key].default is not None: _type = type(_options[key].default)
+        if _options[key].default is not None:
+            _type = type(_options[key].default)
         flags.update({flag.dest: (_type,Field(default=flag.default, description=flag.help))})
 
 FlagsModel = create_model("Flags", **flags)

@@ -120,7 +120,7 @@ def get_matched_noise(_np_src_image, np_mask_rgb, noise_q=1, color_variation=0.0
 
 class Script(scripts.Script):
     def title(self):
-        return "Outpainting mk2"
+        return "Outpainting"
 
     def show(self, is_img2img):
         return is_img2img
@@ -278,6 +278,6 @@ class Script(scripts.Script):
                 images.save_image(img, p.outpath_samples, "", res.seed, p.prompt, opts.samples_format, info=res.info, p=p)
 
         if opts.grid_save and not unwanted_grid_because_of_img_count:
-            images.save_image(combined_grid_image, p.outpath_grids, "grid", res.seed, p.prompt, opts.grid_format, info=res.info, short_filename=not opts.grid_extended_filename, grid=True, p=p)
+            images.save_image(combined_grid_image, p.outpath_grids, "grid", res.seed, p.prompt, opts.samples_format, info=res.info, short_filename=not opts.grid_extended_filename, grid=True, p=p)
 
         return res

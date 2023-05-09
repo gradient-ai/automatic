@@ -1,11 +1,9 @@
 from PIL import Image
 import numpy as np
-
-from modules import scripts_postprocessing, shared
 import gradio as gr
-
-from modules.ui_components import FormRow
-
+from modules import scripts_postprocessing, shared
+from modules.ui_components import FormRow, ToolButton
+from modules.ui import switch_values_symbol
 
 upscale_cache = {}
 
@@ -15,24 +13,30 @@ class ScriptPostprocessingUpscale(scripts_postprocessing.ScriptPostprocessing):
     order = 1000
 
     def ui(self):
-        selected_tab = gr.State(value=0)
+        selected_tab = gr.State(value=0) # pylint: disable=abstract-class-instantiated
 
-        with gr.Tabs(elem_id="extras_resize_mode"):
-            with gr.TabItem('Scale by', elem_id="extras_scale_by_tab") as tab_scale_by:
-                with FormRow():
-                    upscaling_resize = gr.Slider(minimum=1.0, maximum=8.0, step=0.05, label="Resize", value=4, elem_id="extras_upscaling_resize")
-                    extras_upscaler_1 = gr.Dropdown(label='Upscaler', elem_id="extras_upscaler_1", choices=[x.name for x in shared.sd_upscalers], value="SwinIR_4x")
+        with gr.Column():
+            with FormRow():
+                with gr.Tabs(elem_id="extras_resize_mode"):
+                    with gr.TabItem('Scale by', elem_id="extras_scale_by_tab") as tab_scale_by:
+                        upscaling_resize = gr.Slider(minimum=1.0, maximum=8.0, step=0.05, label="Resize", value=4, elem_id="extras_upscaling_resize")
 
-            with gr.TabItem('Scale to', elem_id="extras_scale_to_tab") as tab_scale_to:
-                with FormRow():
-                    upscaling_resize_w = gr.Number(label="Width", value=512, precision=0, elem_id="extras_upscaling_resize_w")
-                    upscaling_resize_h = gr.Number(label="Height", value=512, precision=0, elem_id="extras_upscaling_resize_h")
-                    upscaling_crop = gr.Checkbox(label='Crop to fit', value=True, elem_id="extras_upscaling_crop")
+                    with gr.TabItem('Scale to', elem_id="extras_scale_to_tab") as tab_scale_to:
+                        with FormRow():
+                            with gr.Row(elem_id="upscaling_column_size", scale=4):
+                                upscaling_resize_w = gr.Slider(minimum=64, maximum=4096, step=8, label="Width", value=512, elem_id="extras_upscaling_resize_w")
+                                upscaling_resize_h = gr.Slider(minimum=64, maximum=4096, step=8, label="Height", value=512, elem_id="extras_upscaling_resize_h")
+                                upscaling_res_switch_btn = ToolButton(value=switch_values_symbol, elem_id="upscaling_res_switch_btn")
+                                upscaling_crop = gr.Checkbox(label='Crop to fit', value=True, elem_id="extras_upscaling_crop")
 
-        with FormRow():
-            extras_upscaler_2 = gr.Dropdown(label='Upscaler 2', elem_id="extras_upscaler_2", choices=[x.name for x in shared.sd_upscalers], value=shared.sd_upscalers[0].name, visible=False)
-            extras_upscaler_2_visibility = gr.Slider(minimum=0.0, maximum=1.0, step=0.001, label="Upscaler 2 visibility", value=0.0, elem_id="extras_upscaler_2_visibility")
+            with FormRow():
+                extras_upscaler_1 = gr.Dropdown(label='Upscaler', elem_id="extras_upscaler_1", choices=[x.name for x in shared.sd_upscalers], value=shared.sd_upscalers[0].name)
 
+            with FormRow():
+                extras_upscaler_2 = gr.Dropdown(label='Secondary Upscaler', elem_id="extras_upscaler_2", choices=[x.name for x in shared.sd_upscalers], value=shared.sd_upscalers[0].name)
+                extras_upscaler_2_visibility = gr.Slider(minimum=0.0, maximum=1.0, step=0.001, label="Upscaler 2 visibility", value=0.0, elem_id="extras_upscaler_2_visibility")
+
+        upscaling_res_switch_btn.click(lambda w, h: (h, w), inputs=[upscaling_resize_w, upscaling_resize_h], outputs=[upscaling_resize_w, upscaling_resize_h], show_progress=False)
         tab_scale_by.select(fn=lambda: 0, inputs=[], outputs=[selected_tab])
         tab_scale_to.select(fn=lambda: 1, inputs=[], outputs=[selected_tab])
 
@@ -74,7 +78,7 @@ class ScriptPostprocessingUpscale(scripts_postprocessing.ScriptPostprocessing):
 
         return image
 
-    def process(self, pp: scripts_postprocessing.PostprocessedImage, upscale_mode=1, upscale_by=2.0, upscale_to_width=None, upscale_to_height=None, upscale_crop=False, upscaler_1_name=None, upscaler_2_name=None, upscaler_2_visibility=0.0):
+    def process(self, pp: scripts_postprocessing.PostprocessedImage, upscale_mode=1, upscale_by=2.0, upscale_to_width=None, upscale_to_height=None, upscale_crop=False, upscaler_1_name=None, upscaler_2_name=None, upscaler_2_visibility=0.0): # pylint: disable=arguments-differ
         if upscaler_1_name == "None":
             upscaler_1_name = None
 
@@ -91,13 +95,13 @@ class ScriptPostprocessingUpscale(scripts_postprocessing.ScriptPostprocessing):
         assert upscaler2 or (upscaler_2_name is None), f'could not find upscaler named {upscaler_2_name}'
 
         upscaled_image = self.upscale(pp.image, pp.info, upscaler1, upscale_mode, upscale_by, upscale_to_width, upscale_to_height, upscale_crop)
-        pp.info[f"Postprocess upscaler"] = upscaler1.name
+        pp.info["Postprocess upscaler"] = upscaler1.name
 
         if upscaler2 and upscaler_2_visibility > 0:
             second_upscale = self.upscale(pp.image, pp.info, upscaler2, upscale_mode, upscale_by, upscale_to_width, upscale_to_height, upscale_crop)
             upscaled_image = Image.blend(upscaled_image, second_upscale, upscaler_2_visibility)
 
-            pp.info[f"Postprocess upscaler 2"] = upscaler2.name
+            pp.info["Postprocess upscaler 2"] = upscaler2.name
 
         pp.image = upscaled_image
 
@@ -119,7 +123,7 @@ class ScriptPostprocessingUpscaleSimple(ScriptPostprocessingUpscale):
             "upscaler_name": upscaler_name,
         }
 
-    def process(self, pp: scripts_postprocessing.PostprocessedImage, upscale_by=2.0, upscaler_name=None):
+    def process(self, pp: scripts_postprocessing.PostprocessedImage, upscale_by=2.0, upscaler_name=None): # pylint: disable=arguments-differ
         if upscaler_name is None or upscaler_name == "None":
             return
 
@@ -127,4 +131,4 @@ class ScriptPostprocessingUpscaleSimple(ScriptPostprocessingUpscale):
         assert upscaler1, f'could not find upscaler named {upscaler_name}'
 
         pp.image = self.upscale(pp.image, pp.info, upscaler1, 0, upscale_by, 0, 0, False)
-        pp.info[f"Postprocess upscaler"] = upscaler1.name
+        pp.info["Postprocess upscaler"] = upscaler1.name

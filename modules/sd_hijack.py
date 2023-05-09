@@ -1,5 +1,4 @@
 from types import MethodType
-from rich import print # pylint: disable=redefined-builtin
 import torch
 from torch.nn.functional import silu
 import ldm.modules.attention
@@ -37,49 +36,48 @@ def apply_optimizations():
     can_use_sdp = hasattr(torch.nn.functional, "scaled_dot_product_attention") and callable(getattr(torch.nn.functional, "scaled_dot_product_attention"))
     if devices.device == torch.device("cpu"):
         if opts.cross_attention_optimization == "Scaled-Dot-Product":
-            print("Scaled dot product cross attention is not available on CPU")
+            shared.log.warning("Scaled dot product cross attention is not available on CPU")
             can_use_sdp = False
         if opts.cross_attention_optimization == "xFormers":
-            print("xFormers cross attention is not available on CPU")
+            shared.log.warning("xFormers cross attention is not available on CPU")
             shared.xformers_available = False
 
     if opts.cross_attention_optimization == "Disable cross-attention layer optimization":
-        print("Cross-attention optimization disabled")
+        shared.log.warning("Cross-attention optimization disabled")
         optimization_method = 'none'
     if can_use_sdp and opts.cross_attention_optimization == "Scaled-Dot-Product" and 'SDP disable memory attention' in opts.cross_attention_options:
-        print("Applying scaled dot product cross attention optimization (without memory efficient attention)")
+        shared.log.info("Applying scaled dot product cross attention optimization (without memory efficient attention)")
         ldm.modules.attention.CrossAttention.forward = sd_hijack_optimizations.scaled_dot_product_no_mem_attention_forward
         ldm.modules.diffusionmodules.model.AttnBlock.forward = sd_hijack_optimizations.sdp_no_mem_attnblock_forward
         optimization_method = 'sdp-no-mem'
     elif can_use_sdp and opts.cross_attention_optimization == "Scaled-Dot-Product":
-        print("Applying scaled dot product cross attention optimization")
+        shared.log.info("Applying scaled dot product cross attention optimization")
         ldm.modules.attention.CrossAttention.forward = sd_hijack_optimizations.scaled_dot_product_attention_forward
         ldm.modules.diffusionmodules.model.AttnBlock.forward = sd_hijack_optimizations.sdp_attnblock_forward
         optimization_method = 'sdp'
     if shared.xformers_available and opts.cross_attention_optimization == "xFormers":
-        print("Applying xformers cross attention optimization")
+        shared.log.info("Applying xformers cross attention optimization")
         ldm.modules.attention.CrossAttention.forward = sd_hijack_optimizations.xformers_attention_forward
         ldm.modules.diffusionmodules.model.AttnBlock.forward = sd_hijack_optimizations.xformers_attnblock_forward
         optimization_method = 'xformers'
     if opts.cross_attention_optimization == "Sub-quadratic":
-        print("Applying sub-quadratic cross attention optimization")
+        shared.log.info("Applying sub-quadratic cross attention optimization")
         ldm.modules.attention.CrossAttention.forward = sd_hijack_optimizations.sub_quad_attention_forward
         ldm.modules.diffusionmodules.model.AttnBlock.forward = sd_hijack_optimizations.sub_quad_attnblock_forward
         optimization_method = 'sub-quadratic'
     if opts.cross_attention_optimization == "Split attention":
-        print("Applying split attention optimization")
+        shared.log.info("Applying split attention optimization")
         ldm.modules.attention.CrossAttention.forward = sd_hijack_optimizations.split_cross_attention_forward_v1
         optimization_method = 'v1'
     if opts.cross_attention_optimization == "InvokeAI's":
-        print("Applying InvokeAI's cross attention optimization")
+        shared.log.info("Applying InvokeAI cross attention optimization")
         ldm.modules.attention.CrossAttention.forward = sd_hijack_optimizations.split_cross_attention_forward_invokeAI
         optimization_method = 'invokeai'
     if opts.cross_attention_optimization == "Doggettx's":
-        print("Applying cross attention optimization (Doggettx).")
+        shared.log.info("Applying Doggettx cross attention optimization")
         ldm.modules.attention.CrossAttention.forward = sd_hijack_optimizations.split_cross_attention_forward
         ldm.modules.diffusionmodules.model.AttnBlock.forward = sd_hijack_optimizations.cross_attention_attnblock_forward
         optimization_method = 'doggettx'
-
     return optimization_method
 
 
@@ -92,12 +90,12 @@ def undo_optimizations():
 def fix_checkpoint():
     """checkpoints are now added and removed in embedding/hypernet code, since torch doesn't want
     checkpoints to be added when not training (there's a warning)"""
-    pass
+    pass # pylint: disable=unnecessary-pass
 
 
 def weighted_loss(sd_model, pred, target, mean=True):
     #Calculate the weight normally, but ignore the mean
-    loss = sd_model._old_get_loss(pred, target, mean=False)
+    loss = sd_model._old_get_loss(pred, target, mean=False) # pylint: disable=protected-access
 
     #Check if we have weights available
     weight = getattr(sd_model, '_custom_loss_weight', None)
@@ -110,12 +108,12 @@ def weighted_loss(sd_model, pred, target, mean=True):
 def weighted_forward(sd_model, x, c, w, *args, **kwargs):
     try:
         #Temporarily append weights to a place accessible during loss calc
-        sd_model._custom_loss_weight = w
+        sd_model._custom_loss_weight = w # pylint: disable=protected-access
 
         #Replace 'get_loss' with a weight-aware one. Otherwise we need to reimplement 'forward' completely
         #Keep 'get_loss', but don't overwrite the previous old_get_loss if it's already set
         if not hasattr(sd_model, '_old_get_loss'):
-            sd_model._old_get_loss = sd_model.get_loss
+            sd_model._old_get_loss = sd_model.get_loss # pylint: disable=protected-access
         sd_model.get_loss = MethodType(weighted_loss, sd_model)
 
         #Run the standard forward function, but with the patched 'get_loss'
@@ -129,7 +127,7 @@ def weighted_forward(sd_model, x, c, w, *args, **kwargs):
 
         #If we have an old loss function, reset the loss function to the original one
         if hasattr(sd_model, '_old_get_loss'):
-            sd_model.get_loss = sd_model._old_get_loss
+            sd_model.get_loss = sd_model._old_get_loss # pylint: disable=protected-access
             del sd_model._old_get_loss
 
 def apply_weighted_forward(sd_model):
@@ -178,12 +176,17 @@ class StableDiffusionModelHijack:
         if opts.cuda_compile and opts.cuda_compile_mode != 'none':
             try:
                 import torch._dynamo as dynamo # pylint: disable=unused-import
-                torch._dynamo.config.verbose = True # pylint: disable=protected-access
+                torch._dynamo.config.verbose = opts.cuda_compile_verbose # pylint: disable=protected-access
+                torch._dynamo.config.suppress_errors = opts.cuda_compile_errors # pylint: disable=protected-access
                 torch.backends.cudnn.benchmark = True
+                if opts.cuda_compile_mode == 'hidet':
+                    import hidet
+                    hidet.torch.dynamo_config.use_tensor_core(True)
+                    hidet.torch.dynamo_config.search_space(2)
                 m.model = torch.compile(m.model, mode="default", backend=opts.cuda_compile_mode, fullgraph=False, dynamic=False)
-                print("Model compile enabled:", opts.cuda_compile_mode)
+                shared.log.info(f"Model compile enabled: {opts.cuda_compile_mode}")
             except Exception as err:
-                print(f"Model compile not supported: {err}")
+                shared.log.warning(f"Model compile not supported: {err}")
 
         self.optimization_method = apply_optimizations()
 

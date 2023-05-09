@@ -11,13 +11,13 @@ def create_ui():
         with gr.Column(variant='compact'):
             with gr.Tabs(elem_id="mode_extras"):
 
-                with gr.TabItem('Process Image', elem_id="extras_single_tab") as tab_single:
+                with gr.TabItem('Single Image', id="single_image", elem_id="extras_single_tab") as tab_single:
                     extras_image = gr.Image(label="Source", source="upload", interactive=True, type="pil", elem_id="extras_image")
 
-                with gr.TabItem('Process Batch', elem_id="extras_batch_process_tab") as tab_batch:
-                    image_batch = gr.File(label="Batch Process", file_count="multiple", interactive=True, type="file", elem_id="extras_image_batch")
+                with gr.TabItem('Process Batch', id="batch_process", elem_id="extras_batch_process_tab") as tab_batch:
+                    image_batch = gr.Files(label="Batch Process", interactive=True, elem_id="extras_image_batch")
 
-                with gr.TabItem('Process Folder', elem_id="extras_batch_directory_tab") as tab_batch_dir:
+                with gr.TabItem('Process Folder', id="batch_from_directory", elem_id="extras_batch_directory_tab") as tab_batch_dir:
                     extras_batch_input_dir = gr.Textbox(label="Input directory", **shared.hide_dirs, placeholder="A directory on the same machine where the server is running.", elem_id="extras_batch_input_dir")
                     extras_batch_output_dir = gr.Textbox(label="Output directory", **shared.hide_dirs, placeholder="Leave blank to save images to the default path.", elem_id="extras_batch_output_dir")
                     show_extras_results = gr.Checkbox(label='Show result images', value=True, elem_id="extras_show_extras_results")
@@ -41,8 +41,14 @@ def create_ui():
         for tabname, button in buttons.items():
             parameters_copypaste.register_paste_params_button(parameters_copypaste.ParamBinding(paste_button=button, tabname=tabname, source_text_component=generation_info, source_image_component=extras_image))
 
-    def pretty_geninfo(generation_info):
-        return generation_info.replace(', ', '\n')
+    def pretty_geninfo(generation_info: str):
+        if generation_info is None:
+            return ''
+        sections = generation_info.split('Steps:')
+        if len(sections) > 1:
+            param = sections[0].strip() + '\nSteps:' + sections[1].strip().replace(', ', '\n')
+            return param
+        return generation_info
 
     tab_single.select(fn=lambda: 0, inputs=[], outputs=[tab_index])
     tab_batch.select(fn=lambda: 1, inputs=[], outputs=[tab_index])
